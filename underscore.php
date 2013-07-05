@@ -6,11 +6,11 @@
  */
 
 class _ {
-	/*
-	 * INTERNAL FUNCTIONS
+	/**
+	 * Internal Functions
 	 */
 
-	protected static function _getBreaker() {
+	public static function getBreaker() {
 		static $breaker = null;
 		if (is_null($breaker)) {
 			$breaker = new StdClass();
@@ -23,20 +23,28 @@ class _ {
 	protected static function _isCountable($obj) {
 		return (is_array($obj) || ($obj instanceof Countable));
 	}
-	protected static function _lookupIterator($value) {
+	protected static function _identityIterator($value = null) {
 		$className = get_called_class();
-		return (is_callable($value) ? $value : function($obj) use($value, $className) {
+		return "$className::identity";
+	}
+	protected static function _lookupIterator($value) {
+		if (is_callable($value)) {
+			return $value;
+		}
+		$className = get_called_class();
+		return function($obj) use($value, $className) {
 			$obj = $className::toArray($obj);
 			return (isset($obj[$value]) ? $obj[$value] : null);
-		});
+		};
 	}
-	protected static function _group($obj, $value = null, callable $behavior) {
-		$className = get_called_class();
-		$iterator = static::_lookupIterator($value ?: "$className::identity");
+	protected static function _group($obj, $value = null, callable $behavior = null) {
+		$iterator = static::_lookupIterator($value ?: static::_identityIterator());
 		$result = array();
-		static::each($obj, function($value, $index) use($iterator, $result) {
+		static::each($obj, function($value, $index) use($behavior, $iterator, $result) {
 			$key = call_user_func($iterator, $value, $index, $obj);
-			$behavior($result, $key, $value);
+			if ($behavior) {
+				call_user_func($behavior, $result, $key, $value);
+			}
 		});
 		return $result;
 	}
@@ -55,32 +63,39 @@ class _ {
 		return $output;
 	}
 
-	/*
-	 * COLLECTIONS
+	/**
+	 * Collections
 	 */
 
 	/**
 	 * Iterates over a list of elements, yielding each in
-	 * turn to an iterator function. Aliased to forEach.
+	 * turn to an iterator function.
 	 */
 	public static function each($obj, callable $iterator) {
 		if (static::_isTraversable($obj)) {
-			$breaker = static::_getBreaker();
-			foreach ($obj as $key => $value) {
-				if (call_user_func($iterator, $value, $key, $obj) === $breaker) {
-					return;
-				}
+			// do nothing
+		} elseif (is_object($obj)) {
+			$obj = get_object_vars($obj);
+		} else {
+			throw new InvalidArgumentException('each requires an array, Traversable, or plain object');
+		}
+
+		$breaker = static::getBreaker();
+		foreach ($obj as $key => $value) {
+			if (call_user_func($iterator, $value, $key, $obj) === $breaker) {
+				return;
 			}
 		}
 	}
 	/**
 	 * Return the results of applying the iterator to each element.
 	 * Aliased to collect.
+	 * Note: differs from underscore.js:100; sets $results[$index]
 	 */
 	public static function map($obj, callable $iterator) {
 		$results = array();
 		static::each($obj, function($value, $index, $list) use($iterator, $results) {
-			$results[] = call_user_func($iterator, $value, $index, $list);
+			$results[$index] = call_user_func($iterator, $value, $index, $list);
 		});
 		return $results;
 	}
@@ -101,7 +116,10 @@ class _ {
 				$initial = true;
 			}
 		});
-		return ($initial ? $memo : null);
+		if (!$initial) {
+			throw new InvalidArgumentException('reduce of empty array with no initial value');
+		}
+		return $memo;
 	}
 	/**
 	 * The right-associative version of reduce.
@@ -127,12 +145,13 @@ class _ {
 	/**
 	 * Return all the elements that pass a truth test.
 	 * Aliased to select.
+	 * Note: differs from underscore.js:175; sets $results[$index]
 	 */
 	public static function filter($obj, callable $iterator) {
 		$results = array();
 		static::each($obj, function($value, $index, $list) use($iterator, $results) {
 			if (call_user_func($iterator, $value, $index, $list)) {
-				$results[] = $value;
+				$results[$index] = $value;
 			}
 		});
 		return $results;
@@ -150,11 +169,8 @@ class _ {
 	 * Aliased to all.
 	 */
 	public static function every($obj, callable $iterator = null) {
-		if (!$iterator) {
-			$className = get_called_class();
-			$iterator = "$className::identity";
-		}
-		$breaker = static::_getBreaker();
+		$iterator = static::_identityIterator($iterator);
+		$breaker = static::getBreaker();
 		$result = true;
 		static::each($obj, function($value, $index, $list) use($iterator, $breaker, $result) {
 			if (!call_user_func($iterator, $value, $index, $list)) {
@@ -169,12 +185,9 @@ class _ {
 	 * object matches a truth test.
 	 * Aliased to any.
 	 */
-	public static function some($obj, callable $iterator) {
-		if (!$iterator) {
-			$className = get_called_class();
-			$iterator = "$className::identity";
-		}
-		$breaker = static::_getBreaker();
+	public static function some($obj, callable $iterator = null) {
+		$iterator = static::_identityIterator($iterator);
+		$breaker = static::getBreaker();
 		$result = false;
 		static::each($obj, function($value, $index, $list) use($breaker, $result) {
 			if ($result || ($result = call_user_func($iterator, $value, $index, $list))) {
@@ -227,7 +240,8 @@ class _ {
 		if (static::isEmpty($attrs)) {
 			return ($first ? null : array());
 		}
-		$iterator = function($value) use($attrs) {
+		$func = ($first ? 'find' : 'filter');
+		return static::$func($obj, function($value) use($attrs) {
 			$value = static::toArray($value);
 			foreach ($attrs as $key => $attr) {
 				if (!isset($value[$key]) ||
@@ -236,9 +250,7 @@ class _ {
 				}
 			}
 			return true;
-		};
-		$func = ($first ? 'find' : 'filter');
-		return static::$func($obj, $iterator);
+		});
 	}
 	/**
 	 * Convenience version of a common use case of find:
@@ -252,19 +264,43 @@ class _ {
 	 * Return the maximum element or (element-based computation).
 	 */
 	public static function max($obj, callable $iterator = null) {
-		if (static::_isCountable($obj) && count($obj)) {
-			return max($iterator ? static::map($obj, $iterator) : $obj);
-		}
-		return null;
+		if (!$iterator) {
+			if (is_array($obj)) {
+				return max($obj);
+			}
+			if (static::_isCountable($obj) && !count($obj)) {
+				return -INF;
+			}
+		$result = array('computed' => -INF, 'value' => -INF);
+		static::each($obj, function($value, $index, $list) use($iterator, $result) {
+			$computed = ($iterator ? call_user_func($iterator, $value, $index, $list) : $value);
+			if ($computed >= $result['computed']) {
+				$result['computed'] = $computed;
+				$result['value'] = $value;
+			}
+		});
+		return $result['value'];
 	}
 	/**
 	 * Return the minimum element or (element-based computation).
 	 */
 	public static function min($obj, callable $iterator = null) {
-		if (static::_isCountable($obj) && count($obj)) {
-			return min($iterator ? static::map($obj, $iterator) : $obj);
-		}
-		return null;
+		if (!$iterator) {
+			if (is_array($obj)) {
+				return min($obj);
+			}
+			if (static::_isCountable($obj) && !count($obj)) {
+				return INF;
+			}
+		$result = array('computed' => INF, 'value' => INF);
+		static::each($obj, function($value, $index, $list) use($iterator, $result) {
+			$computed = ($iterator ? call_user_func($iterator, $value, $index, $list) : $value);
+			if ($computed < $result['computed']) {
+				$result['computed'] = $computed;
+				$result['value'] = $value;
+			}
+		});
+		return $result['value'];
 	}
 	/**
 	 * Shuffle an array.
@@ -298,7 +334,7 @@ class _ {
 			return $obj;
 		}
 		// complex case for objects
-		$array = static::map($obj, function($value, $index, $list) {
+		$array = static::map($obj, function($value, $index, $list) use($iterator) {
 			return array(
 				'value' => $value,
 				'index' => $index,
@@ -332,6 +368,7 @@ class _ {
 			}
 			$result[$key][$value];
 		});
+
 	}
 	/**
 	 * Counts instances of an object that group by a certain
@@ -352,7 +389,7 @@ class _ {
 	 * maintain order. Uses binary search.
 	 */
 	public static function sortedIndex(array $array, $obj, $iterator = null) {
-		$iterator = ($iterator ? static::_lookupIterator($iterator) : static::identity());
+		$iterator = ($iterator ? static::_lookupIterator($iterator) : 'static::identity');
     	$value = call_user_func($iterator, $obj);
 		$low = 0;
 		$high = count($array);
@@ -387,8 +424,8 @@ class _ {
 		return count(static::toArray($obj));
 	}
 
-	/*
-	 * ARRAYS
+	/**
+	 * Arrays
 	 */
 
 	/**
@@ -411,8 +448,7 @@ class _ {
 	 * the last N. The guard check allows it to work with map.
 	 */
 	public static function initial(array $array, $n = null, $guard = false) {
-		$end = ((is_int($n) && !$guard) ? $n : 1);
-		return array_slice($array, 0, -$end);
+		return array_slice($array, 0, ((is_int($n) && !$guard) ? -$n : -1));
 	}
 	/**
 	 * Get the last element of an array.
@@ -422,8 +458,7 @@ class _ {
 	 */
 	public static function last(array $array, $n = null, $guard = false) {
 		if (is_int($n) && !$guard) {
-			$start = max((count($array) - $n), 0);
-			return array_slice($array, $start);
+			return array_slice($array, max((count($array) - $n), 0));
 		}
 		return end($array);
 	}
@@ -462,7 +497,7 @@ class _ {
 	 * Produce a duplicate-free version of the array.
 	 * Aliased to unique.
 	 */
-	public static function uniq($array) {
+	public static function uniq(array $array) {
 		return array_unique($array);
 	}
 	/**
@@ -486,8 +521,7 @@ class _ {
 	 * present in just the first array will remain.
 	 */
 	public static function difference() {
-		$args = func_get_args();
-		return array_diff($args[0], array_merge(array_slice($args, 1)));
+		return call_user_func_array('array_diff', func_get_args());
 	}
 	/**
 	 * Zip together multiple lists into a single
@@ -511,10 +545,10 @@ class _ {
 	 * parallel arrays of the same length -- one
 	 * of keys, and one of the corresponding values.
 	 */
-	public static function object($list, $values = null) {
+	public static function object(array $list, $values = null) {
 		$result = new StdClass();
 		for ($i = 0, $l = count($list); $i < $l; ++$i) {
-			if ($values) {
+			if (is_array($values)) {
 				$result->$list[$i] = $values[$i];
 			} else {
 				$result->$list[$i][0] = $list[$i][1];
@@ -527,7 +561,7 @@ class _ {
 	 * of an item in an array, or -1 if the item is
 	 * not included in the array.
 	 */
-	public static function indexOf($array, $item) {
+	public static function indexOf(array $array, $item) {
 		$index = array_search($array, $item);
 		return (is_int($index) ? $index : -1);
 	}
@@ -536,7 +570,7 @@ class _ {
 	 * of an item in an array, or -1 if the item is
 	 * not included in the array.
 	 */
-	public static function lastIndexOf($array, $item, $from = 0) {
+	public static function lastIndexOf(array $array, $item, $from = 0) {
 		return static::indexOf(array_reverse($array, true));
 	}
 	/**
@@ -550,8 +584,8 @@ class _ {
 		return range($start, $stop, $step);
 	}
 
-	/*
-	 * FUNCTIONS
+	/**
+	 * Functions
 	 */
 
 	/**
@@ -569,10 +603,7 @@ class _ {
 	 * Memoize an expensive function by storing its results.
 	 */
 	public static function memoize(callable $func, callable $hasher = null) {
-		if (is_null($hasher)) {
-			$className = get_called_class();
-			$hasher = "$className::identity";
-		}
+		$hasher = static::_identityIterator($hasher);
 		return function() use($func, $hasher) {
 			static $memo = null;
 			if (is_null($memo)) {
@@ -647,8 +678,8 @@ class _ {
 		};
 	}
 
-	/*
-	 * OBJECT
+	/**
+	 * Objects
 	 */
 
 	/**
@@ -742,8 +773,8 @@ class _ {
 		return $obj;
 	}
 
-	/*
-	 * UTILITIES
+	/**
+	 * Utilities
 	 */
 
 	/**
@@ -771,49 +802,49 @@ class _ {
 		}
 		return empty($obj);
 	}
-	 /**
-	  * Is a given value an array?
-	  */
-	 public static function isArray($obj) {
-	 	 return is_array($obj);
-	 }
-	 /**
-	  * Is a given value an object?
-	  */
-	 public static function isObject($obj) {
-	 	 return is_object($obj);
-	 }
-	 /**
-	  * Is a given value callable?
-	  */
-	 public static function isCallable($obj) {
-	 	 return is_callable($obj);
-	 }
-	 /**
-	  * Is a given value a string?
-	  */
-	 public static function isString($obj) {
-	 	 return is_string($obj);
-	 }
-	 /**
-	  * Is a given value a number?
-	  */
-	 public static function isNumber($obj) {
-	 	 return (is_int($obj) || is_float($obj) ||
-	 	 	 		((is_string($obj) && is_numeric($obj)));
-	 }
-	 /**
-	  * Is a given value a Boolean?
-	  */
-	 public static function isBoolean($obj) {
-	 	 return is_bool($obj);
-	 }
-	 /**
-	  * Is a given value null?
-	  */
-	 public static function isNull($obj) {
-	 	 return is_null($obj);
-	 }
+	/**
+	 * Is a given value an array?
+	 */
+	public static function isArray($obj) {
+		return is_array($obj);
+	}
+	/**
+	 * Is a given value an object?
+	 */
+	public static function isObject($obj) {
+		return is_object($obj);
+	}
+	/**
+	 * Is a given value callable?
+	 */
+	public static function isCallable($obj) {
+		return is_callable($obj);
+	}
+	/**
+	 * Is a given value a string?
+	 */
+	public static function isString($obj) {
+		return is_string($obj);
+	}
+	/**
+	 * Is a given value a number?
+	 */
+	public static function isNumber($obj) {
+		return (is_int($obj) || is_float($obj) ||
+					(is_string($obj) && is_numeric($obj)));
+	}
+	/**
+	 * Is a given value a Boolean?
+	 */
+	public static function isBoolean($obj) {
+		return is_bool($obj);
+	}
+	/**
+	 * Is a given value null?
+	 */
+	public static function isNull($obj) {
+		return is_null($obj);
+	}
 	/**
 	 * Determines if an object has a given property.
 	 */
@@ -899,54 +930,33 @@ class _ {
 		return (is_string($prefix) ? "$prefix$id" : $id);
 	}
 
-	/*
-	 * ALIASES
+	/**
+	 * Aliases
 	 */
 
-	public static function for_each($obj, callable $iterator) {
-		static::each($obj, $iterator);
-	}
-	public static function collect($obj, callable $iterator) {
-		return static::map($obj, $iterator);
-	}
-	public static function foldl($obj, callable $iterator, $memo = null) {
-		return static::reduce($obj, $iterator, $memo);
-	}
-	public static function inject($obj, callable $iterator, $memo = null) {
-		return static::reduce($obj, $iterator, $memo);
-	}
-	public static function foldr($obj, callable $iterator, $memo = null) {
-		return static::reduceRight($obj, $iterator, $memo);
-	}
-	public static function detect($obj, callable $iterator) {
-		return static::find($obj, $iterator);
-	}
-	public static function select($obj, callable $iterator) {
-		return static::filter($obj, $iterator);
-	}
-	public static function all($obj, callable $iterator = null) {
-		return static::every($obj, $iterator);
-	}
-	public static function any($obj, $iterator) {
-		return static::some($obj, $iterator);
-	}
-	public static function includes($obj, $target) {
-		return static::contains($obj, $target);
-	}
-	public static function head($array, $n = null, $guard = false) {
-		return static::first($array, $n, $guard);
-	}
-	public static function take($array, $n = null, $guard = false) {
-		return static::first($array, $n, $guard);
-	}
-	public static function tail($array, $n = null, $guard = false) {
-		return static::rest($array, $n, $guard);
-	}
-	public static function drop($array, $n = null, $guard = false) {
-		return static::rest($array, $n, $guard);
-	}
-	public static function unique($array) {
-		return static::uniq($array);
+	public static function __callStatic($name, $arguments) {
+		switch ($name) {
+			case 'forEach':
+			case 'for_each': $method = 'each';        break;
+			case 'collect':  $method = 'map';         break;
+			case 'foldl':
+			case 'inject':   $method = 'reduce';      break;
+			case 'foldr':    $method = 'reduceRight'; break;
+			case 'detect':   $method = 'find';        break;
+			case 'select':   $method = 'filter';      break;
+			case 'all':      $method = 'every';       break;
+			case 'any':      $method = 'some';        break;
+			case 'includes': $method = 'contains';    break;
+			case 'head':
+			case 'take':     $method = 'first';       break;
+			case 'tail':
+			case 'drop':     $method = 'first';       break;
+			case 'unique':   $method = 'uniq';        break;
+			default:
+				throw new BadMethodCallException("Undefined method: $name");
+			break;
+		}
+		return call_user_func_array("static::$method", $arguments);
 	}
 }
 ?>
