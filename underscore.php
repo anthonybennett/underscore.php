@@ -2,7 +2,7 @@
 /**
  * Underscore.js clone
  *
- * @author anthony@dynamit.us
+ * @author bennett.ureta@gmail.com
  */
 
 class _ {
@@ -23,28 +23,38 @@ class _ {
 	protected static function _isCountable($obj) {
 		return (is_array($obj) || ($obj instanceof Countable));
 	}
-	protected static function _identityIterator($value = null) {
+	protected static function _identityIterator(&$value) {
+		if ($value) {
+			return $value;
+		}
 		$className = get_called_class();
 		return "$className::identity";
 	}
 	protected static function _lookupIterator($value) {
-		if (is_callable($value)) {
+		if (is_null($value)) {
+			throw new InvalidArgumentException('$value cannot be null');
+		}
+		if (is_callable($value) || ($value instanceof Closure)) {
 			return $value;
 		}
 		$className = get_called_class();
 		return function($obj) use($value, $className) {
 			$obj = $className::toArray($obj);
-			return (isset($obj[$value]) ? $obj[$value] : null);
+			return @$obj[$value];
 		};
 	}
-	protected static function _group($obj, $value = null, callable $behavior = null) {
+	protected static function _group(&$obj, $value = null, $behavior) {
 		$iterator = static::_lookupIterator($value ?: static::_identityIterator());
+		$isItClosure = static::_validateFunction($iterator);
+		$isBeClosure = static::_validateFunction($behavior);
 		$result = array();
-		static::each($obj, function($value, $index) use($behavior, $iterator, $result) {
-			$key = call_user_func($iterator, $value, $index, $obj);
-			if ($behavior) {
-				call_user_func($behavior, $result, $key, $value);
-			}
+		static::each($obj, function($value, $index, &$list) use($iterator, $isItClosure, $behavior, $isBeClosure, &$result) {
+			$key = ($isItClosure ?
+						$iterator($value, $index, $list) :
+						call_user_func($iterator, $value, $index, $list));
+			($isBeClosure ?
+				$behavior($result, $key, $value) :
+				call_user_func($behavior, $result, $key, $value));
 		});
 		return $result;
 	}
@@ -62,6 +72,15 @@ class _ {
 		}
 		return $output;
 	}
+	protected static function _validateFunction($function) {
+		if ($function instanceof Closure) {
+			return true;
+		}
+		if (is_callable($function)) {
+			return false;
+		}
+		throw new InvalidArgumentException('$function must be callable or Closure');
+	}
 
 	/**
 	 * Collections
@@ -71,18 +90,22 @@ class _ {
 	 * Iterates over a list of elements, yielding each in
 	 * turn to an iterator function.
 	 */
-	public static function each($obj, callable $iterator) {
+	public static function each(&$obj, $iterator) {
 		if (static::_isTraversable($obj)) {
-			// do nothing
+			$values = $obj;
 		} elseif (is_object($obj)) {
-			$obj = get_object_vars($obj);
+			$values = get_object_vars($obj);
 		} else {
 			throw new InvalidArgumentException('each requires an array, Traversable, or plain object');
 		}
 
+		$isClosure = static::_validateFunction($iterator);
 		$breaker = static::getBreaker();
-		foreach ($obj as $key => $value) {
-			if (call_user_func($iterator, $value, $key, $obj) === $breaker) {
+		foreach ($values as $key => $value) {
+			$result = ($isClosure ?
+						$iterator($value, $key, $obj) :
+						call_user_func($iterator, $value, $key, $obj));
+			if ($result === $breaker) {
 				return;
 			}
 		}
@@ -92,10 +115,13 @@ class _ {
 	 * Aliased to collect.
 	 * Note: differs from underscore.js:100; sets $results[$index]
 	 */
-	public static function map($obj, callable $iterator) {
+	public static function map(&$obj, $iterator) {
+		$isClosure = static::_validateFunction($iterator);
 		$results = array();
-		static::each($obj, function($value, $index, $list) use($iterator, $results) {
-			$results[$index] = call_user_func($iterator, $value, $index, $list);
+		static::each($obj, function($value, $index, &$list) use($iterator, &$results, $isClosure) {
+			$results[$index] = ($isClosure ?
+									$iterator($value, $index, $list) :
+									call_user_func($iterator, $value, $index, $list));
 		});
 		return $results;
 	}
@@ -103,14 +129,17 @@ class _ {
 	 * Reduce builds up a single result from a list of values.
 	 * Aliased to foldl, inject.
 	 */
-	public static function reduce($obj, callable $iterator, $memo = null) {
+	public static function reduce(&$obj, $iterator, $memo = null) {
+		$isClosure = static::_validateFunction($iterator);
 		if (is_null($obj)) {
 			$obj = array();
 		}
 		$initial = !is_null($memo);
-		static::each($obj, function($value, $index, $list) use($iterator, $memo, $initial) {
+		static::each($obj, function($value, $index, &$list) use($iterator, &$memo, &$initial, $isClosure) {
 			if ($initial) {
-				$memo = call_user_func($iterator, $memo, $value, $index, $list);
+				$memo = ($isClosure ?
+							$iterator($memo, $value, $index, $list) :
+							call_user_func($iterator, $memo, $value, $index, $list));
 			} else {
 				$memo = $value;
 				$initial = true;
@@ -125,17 +154,21 @@ class _ {
 	 * The right-associative version of reduce.
 	 * Aliased to foldr.
 	 */
-	public static function reduceRight($obj, callable $iterator, $memo = null) {
-		return static::reduce(array_reverse(static::toArray($obj)), $iterator, $memo);
+	public static function reduceRight(&$obj, $iterator, $memo = null) {
+		$array = array_reverse(static::toArray($obj));
+		return static::reduce($array, $iterator, $memo);
 	}
 	/**
 	 * Return the first value which passes a truth test.
 	 * Aliased to detect.
 	 */
-	public static function find($obj, callable $iterator) {
+	public static function find(&$obj, $iterator) {
+		$isClosure = static::_validateFunction($iterator);
 		$result = null;
-		static::some($obj, function($value, $index, $list) use($iterator, $result) {
-			if (call_user_func($iterator, $value, $index, $list)) {
+		static::some($obj, function($value, $index, &$list) use($iterator, &$result, $isClosure) {
+			if ($isClosure ?
+					$iterator($value, $index, $list) :
+					call_user_func($iterator, $value, $index, $list)) {
 				$result = $value;
 				return true;
 			}
@@ -147,10 +180,13 @@ class _ {
 	 * Aliased to select.
 	 * Note: differs from underscore.js:175; sets $results[$index]
 	 */
-	public static function filter($obj, callable $iterator) {
+	public static function filter(&$obj, $iterator) {
+		$isClosure = static::_validateFunction($iterator);
 		$results = array();
-		static::each($obj, function($value, $index, $list) use($iterator, $results) {
-			if (call_user_func($iterator, $value, $index, $list)) {
+		static::each($obj, function($value, $index, &$list) use($iterator, &$results, $isClosure) {
+			if ($isClosure ?
+					$iterator($value, $index, $list) :
+					call_user_func($iterator, $value, $index, $list)) {
 				$results[$index] = $value;
 			}
 		});
@@ -159,21 +195,27 @@ class _ {
 	/**
 	 * Return all the elements for which a truth test fails.
 	 */
-	public static function reject($obj, callable $iterator) {
-		return static::filter($obj, function($value, $index, $list) use($iterator) {
-			return !call_user_func($iterator, $value, $index, $list);
+	public static function reject($obj, $iterator) {
+		$isClosure = static::_validateFunction($iterator);
+		return static::filter($obj, function($value, $index, &$list) use($iterator, $isClosure) {
+			return ($isClosure ?
+						!$iterator($value, $index, $list) :
+						!call_user_func($iterator, $value, $index, $list));
 		});
 	}
 	/**
 	 * Determine whether all of the elements match a truth test.
 	 * Aliased to all.
 	 */
-	public static function every($obj, callable $iterator = null) {
+	public static function every($obj, $iterator = null) {
 		$iterator = static::_identityIterator($iterator);
+		$isClosure = static::_validateFunction($iterator);
 		$breaker = static::getBreaker();
 		$result = true;
-		static::each($obj, function($value, $index, $list) use($iterator, $breaker, $result) {
-			if (!call_user_func($iterator, $value, $index, $list)) {
+		static::each($obj, function($value, $index, &$list) use($iterator, &$breaker, &$result, $isClosure) {
+			if ($isClosure ?
+					!$iterator($value, $index, $list) :
+					!call_user_func($iterator, $value, $index, $list)) {
 				$result = false;
 				return $breaker;
 			}
@@ -181,16 +223,18 @@ class _ {
 		return $result;
 	}
 	/**
-	 * Determine if at least one element in the
-	 * object matches a truth test.
-	 * Aliased to any.
+	 * Determine if at least one element in the object
+	 * matches a truth test. Aliased to any.
 	 */
-	public static function some($obj, callable $iterator = null) {
+	public static function some(&$obj, $iterator = null) {
 		$iterator = static::_identityIterator($iterator);
+		$isClosure = static::_validateFunction($iterator);
 		$breaker = static::getBreaker();
 		$result = false;
-		static::each($obj, function($value, $index, $list) use($breaker, $result) {
-			if ($result || ($result = call_user_func($iterator, $value, $index, $list))) {
+		static::each($obj, function($value, $index, &$list) use($iterator, &$breaker, &$result, $isClosure) {
+			if ($result || ($result = ($isClosure ?
+					$iterator($value, $index, $list) :
+					call_user_func($iterator, $value, $index, $list)))) {
 				return $breaker;
 			}
 		});
@@ -201,7 +245,7 @@ class _ {
 	 * a given value (using ===).
 	 * Aliased to includes.
 	 */
-	public static function contains($obj, $target) {
+	public static function contains(&$obj, $target) {
 		return static::some($obj, function($value) use($target) {
 			return ($value === $target);
 		});
@@ -214,20 +258,24 @@ class _ {
 		$obj = $args[0];
 		$method = $args[1];
 		$args = array_slice($args, 2);
+		array_unshift($args, null);
+		$isClosure = ($method instanceof Closure);
 		$isCallable = is_callable($method);
-		return static::map($obj, function($value) use($method, $args, $isCallable) {
-			$iterator = ($isCallable ? $method : array($value, $method));
-			return call_user_func($iterator, $value, $args);
+		return static::map($obj, function($value) use($method, &$args, $isCallable, $isClosure) {
+			$iterator = (($isCallable || $isClosure) ? $method : array($value, $method));
+			$args[0] = $value;
+			return call_user_func_array($iterator, $args);
 		});
 	}
 	/**
 	 * Convenience version of a common use case of map:
 	 * fetching a property.
 	 */
-	public static function pluck($obj, $key) {
-		return static::map($obj, function($value) use($key) {
-			$value = static::toArray($value);
-			return (isset($value[$key]) ? $value[$key] : null);
+	public static function pluck(&$obj, $key) {
+		$className = get_called_class();
+		return static::map($obj, function($value) use($key, $className) {
+			$array = $className::toArray($value);
+			return @$array[$key];
 		});
 	}
 	/**
@@ -235,14 +283,15 @@ class _ {
 	 * selecting only objects containing specific key:value
 	 * pairs.
 	 */
-	public static function where($obj, $attrs, $first = false) {
+	public static function where(&$obj, $attrs = null, $first = false) {
+		$className = get_called_class();
 		$attrs = static::toArray($attrs);
 		if (static::isEmpty($attrs)) {
 			return ($first ? null : array());
 		}
 		$func = ($first ? 'find' : 'filter');
-		return static::$func($obj, function($value) use($attrs) {
-			$value = static::toArray($value);
+		return static::$func($obj, function($value) use($attrs, $className) {
+			$value = $className::toArray($value);
 			foreach ($attrs as $key => $attr) {
 				if (!isset($value[$key]) ||
 					($value[$key] !== $attr)) {
@@ -263,17 +312,24 @@ class _ {
 	/**
 	 * Return the maximum element or (element-based computation).
 	 */
-	public static function max($obj, callable $iterator = null) {
-		if (!$iterator) {
-			if (is_array($obj)) {
-				return max($obj);
-			}
+	public static function max($obj, $iterator = null) {
+		if ($iterator) {
+			$isClosure = static::_validateFunction($iterator);
+		} else {
 			if (static::_isCountable($obj) && !count($obj)) {
 				return -INF;
 			}
+			if (is_array($obj)) {
+				return max($obj);
+			}
+			$isClosure = false;
+		}
 		$result = array('computed' => -INF, 'value' => -INF);
-		static::each($obj, function($value, $index, $list) use($iterator, $result) {
-			$computed = ($iterator ? call_user_func($iterator, $value, $index, $list) : $value);
+		static::each($obj, function($value, $index, &$list) use($iterator, &$result, $isClosure) {
+			$computed = ($iterator ? ($isClosure ?
+							$iterator($value, $index, $list) :
+							call_user_func($iterator, $value, $index, $list)) :
+							$value);
 			if ($computed >= $result['computed']) {
 				$result['computed'] = $computed;
 				$result['value'] = $value;
@@ -284,17 +340,24 @@ class _ {
 	/**
 	 * Return the minimum element or (element-based computation).
 	 */
-	public static function min($obj, callable $iterator = null) {
-		if (!$iterator) {
-			if (is_array($obj)) {
-				return min($obj);
-			}
+	public static function min($obj, $iterator = null) {
+		if ($iterator) {
+			$isClosure = static::_validateFunction($iterator);
+		} else {
 			if (static::_isCountable($obj) && !count($obj)) {
 				return INF;
 			}
+			if (is_array($obj)) {
+				return min($obj);
+			}
+			$isClosure = false;
+		}
 		$result = array('computed' => INF, 'value' => INF);
-		static::each($obj, function($value, $index, $list) use($iterator, $result) {
-			$computed = ($iterator ? call_user_func($iterator, $value, $index, $list) : $value);
+		static::each($obj, function($value, $index, &$list) use($iterator, &$result, $isClosure) {
+			$computed = ($iterator ? ($isClosure ?
+							$iterator($value, $index, $list) :
+							call_user_func($iterator, $value, $index, $list)) :
+							$value);
 			if ($computed < $result['computed']) {
 				$result['computed'] = $computed;
 				$result['value'] = $value;
@@ -312,8 +375,9 @@ class _ {
 		}
 		$index = 0;
 		$shuffled = array();
-		static::each($obj, function($value) use($index, $shuffled) {
-			$rand = static::random($index);
+		$className = get_called_class();
+		static::each($obj, function($value) use($index, &$shuffled, $className) {
+			$rand = $className::random($index);
 			$shuffled[$index++] = @$shuffled[$rand];
 			$shuffled[$rand] = $value;
 		});
@@ -322,11 +386,11 @@ class _ {
 	/**
 	 * Sort the object's values by a criterion produced by an iterator.
 	 */
-	public static function sortBy($obj, callable $value = null) {
-		$iterator = static::_lookupIterator($value);
+	public static function sortBy(&$obj, $value = null) {
 		// trivial case for arrays
 		if (is_array($obj)) {
 			if ($value) {
+				$iterator = static::_lookupIterator($value);
 				usort($obj, $iterator);
 			} else {
 				sort($obj);
@@ -334,11 +398,15 @@ class _ {
 			return $obj;
 		}
 		// complex case for objects
-		$array = static::map($obj, function($value, $index, $list) use($iterator) {
+		$iterator = static::_lookupIterator($value);
+		$isClosure = static::_validateFunction($iterator);
+		$array = static::map($obj, function($value, $index, &$list) use($iterator, $isClosure) {
 			return array(
 				'value' => $value,
 				'index' => $index,
-				'criteria' => call_user_func($iterator, $value, $index, $list)
+				'criteria' => ($isClosure ?
+									$iterator($value, $index, $list) :
+									call_user_func($iterator, $value, $index, $list))
 			);
 		});
 		usort($array, function($left, $right) {
@@ -361,21 +429,20 @@ class _ {
 	 * a string attribute to group by, or a function that
 	 * returns the criterion.
 	 */
-	public static function groupBy($obj, $value) {
+	public static function groupBy(&$obj, $value) {
 		return static::_group($obj, $value, function(&$result, $key, $value) {
 			if (!isset($result[$key])) {
 				$result[$key] = array();
 			}
-			$result[$key][$value];
+			$result[$key][] = $value;
 		});
-
 	}
 	/**
 	 * Counts instances of an object that group by a certain
 	 * criterion. Pass either a string attribute to count by,
 	 * or a function that returns the criterion.
 	 */
-	public static function countBy($obj, $value) {
+	public static function countBy(&$obj, $value) {
 		return static::_group($obj, $value, function(&$result, $key) {
 			if (!isset($result[$key])) {
 				$result[$key] = 0;
@@ -389,13 +456,21 @@ class _ {
 	 * maintain order. Uses binary search.
 	 */
 	public static function sortedIndex(array $array, $obj, $iterator = null) {
-		$iterator = ($iterator ? static::_lookupIterator($iterator) : 'static::identity');
-    	$value = call_user_func($iterator, $obj);
+		$iterator = ($iterator ?
+						static::_lookupIterator($iterator) :
+						'static::identity');
+		$isClosure = static::_validateFunction($iterator);
+    	$value = ($isClosure ?
+					$iterator($obj) :
+					call_user_func($iterator, $obj));
 		$low = 0;
 		$high = count($array);
 		while ($low < $high) {
 			$mid = floor(($low + $high) / 2);
-			if (call_user_func($iterator, $array[$mid]) < $value) {
+			$midValue = ($isClosure ?
+							$iterator($array[$mid]) :
+							call_user_func($iterator, $array[$mid]));
+			if ($midValue < $value) {
 				$low = ($mid + 1);
 			} else {
 				$high = $mid;
@@ -408,7 +483,7 @@ class _ {
 	 * generic objects as their variables;
 	 * everything else as an empty array.
 	 */
-	public static function toArray($obj) {
+	public static function toArray(&$obj) {
 		if (static::_isTraversable($obj)) {
 			return $obj;
 		}
@@ -436,10 +511,9 @@ class _ {
 	 * allows it to work with map.
 	 */
 	public static function first(array $array, $n = null, $guard = false) {
-		if (is_int($n) && !$guard) {
-			return array_slice($array, 0, $n);
-		}
-		return (isset($array[0]) ? $array[0] : null);
+		return ((is_int($n) && !$guard) ?
+					array_slice($array, 0, $n) :
+					@$array[0]);
 	}
 	/**
 	 * Returns everything but the last entry of the array.
@@ -470,7 +544,7 @@ class _ {
 	 * work with map.
 	 */
 	public static function rest(array $array, $n = null, $guard = false) {
-		return array_slice($array, (is_int($n) && !$guard ? $n : 1));
+		return array_slice($array, ((is_int($n) && !$guard) ? $n : 1));
 	}
 	/**
 	 * Trim out all falsy values from an array.
@@ -506,14 +580,14 @@ class _ {
 	 * passed-in arrays.
 	 */
 	public static function union() {
-		return static::unique(call_user_func_array('array_merge', func_get_args()));
+		return array_merge(static::unique(call_user_func_array('array_merge', func_get_args())));
 	}
 	/**
 	 * Produce an array that contains every item
 	 * shared between all the passed-in arrays.
 	 */
 	public static function intersection() {
-		return static::unique(call_user_func_array('array_intersect', func_get_args()));
+		return array_merge(static::unique(call_user_func_array('array_intersect', func_get_args())));
 	}
 	/**
 	 * Take the difference between one array and
@@ -562,7 +636,7 @@ class _ {
 	 * not included in the array.
 	 */
 	public static function indexOf(array $array, $item) {
-		$index = array_search($array, $item);
+		$index = array_search($item, $array);
 		return (is_int($index) ? $index : -1);
 	}
 	/**
@@ -570,8 +644,12 @@ class _ {
 	 * of an item in an array, or -1 if the item is
 	 * not included in the array.
 	 */
-	public static function lastIndexOf(array $array, $item, $from = 0) {
-		return static::indexOf(array_reverse($array, true));
+	public static function lastIndexOf(array $array, $item, $from = null) {
+		if (!is_null($from)) {
+			$array = array_slice($array, 0, $from, true);
+		}
+		$array = array_reverse($array, true);
+		return static::indexOf($array, $item);
 	}
 	/**
 	 * Generate an integer array containing an arithmetic progression.
@@ -581,7 +659,7 @@ class _ {
 			$stop = $start;
 			$start = 0;
 		}
-		return range($start, $stop, $step);
+		return range($start, ($stop - 1), $step);
 	}
 
 	/**
@@ -602,7 +680,7 @@ class _ {
 	/**
 	 * Memoize an expensive function by storing its results.
 	 */
-	public static function memoize(callable $func, callable $hasher = null) {
+	public static function memoize($func, $hasher = null) {
 		$hasher = static::_identityIterator($hasher);
 		return function() use($func, $hasher) {
 			static $memo = null;
@@ -622,7 +700,7 @@ class _ {
 	 * one time, no matter how often you call it. Useful
 	 * for lazy initialization.
 	 */
-	public static function once(callable $func) {
+	public static function once($func) {
 		return function() use($func) {
 			static $ran = false,
 					$memo = null;
@@ -640,10 +718,10 @@ class _ {
 	 * run code before and after, and conditionally
 	 * execute the original function.
 	 */
-	public static function wrap(callable $func, $wrapper) {
+	public static function wrap($func, $wrapper) {
 		return function() use($func, $wrapper) {
 			$args = func_get_args();
-			array_unshift($func);
+			array_unshift($args, $func);
 			return call_user_func_array($wrapper, $args);
 		};
 	}
@@ -666,12 +744,16 @@ class _ {
 	 * Returns a function that will only be executed
 	 * after being called N times.
 	 */
-	public static function after($times, callable $func) {
+	public static function after($times, $func) {
 		if ($times < 1) {
 			return call_user_func($func);
 		}
-		return function() use($times) {
-			if (--$times < 1) {
+		return function() use($times, $func) {
+			static $afterTimes = null;
+			if (is_null($afterTimes)) {
+				$afterTimes = $times;
+			}
+			if (--$afterTimes < 1) {
 				$args = func_get_args();
 				return call_user_func_array($func, $args);
 			}
@@ -706,7 +788,6 @@ class _ {
 	}
 	/**
 	 * Invert the keys and values of an object.
-	 * The values must be serializable.
 	 */
 	public static function invert($obj) {
 		return array_flip(static::toArray($obj));
@@ -719,11 +800,11 @@ class _ {
 		$copy = array();
 		$args = func_get_args();
 		$obj = static::toArray($args[0]);
-		$keys = array_slice($args);
+		$keys = array_slice($args, 1);
 		foreach ($keys as $key) {
 			$copy[$key] = $obj[$key];
 		}
-		return $copy;
+		return (is_object($args[0]) ? (object)$copy : $copy);
 	}
 	/**
 	 * Return a copy of the object without the
@@ -733,13 +814,13 @@ class _ {
 		$copy = array();
 		$args = func_get_args();
 		$obj = static::toArray($args[0]);
-		$keys = array_fill_keys(array_slice($args), true);
+		$keys = array_fill_keys(array_slice($args, 1), true);
 		foreach ($obj as $key => $value) {
 			if (!isset($keys[$key])) {
 				$copy[$key] = $obj[$key];
 			}
 		}
-		return $copy;
+		return (is_object($args[0]) ? (object)$copy : $copy);
 	}
 	/**
 	 * Fill in a given object with default properties.
@@ -747,14 +828,14 @@ class _ {
 	public static function defaults() {
 		$args = func_get_args();
 		$obj = array_shift($args);
-		$is_array = is_array($obj);
-		$is_object = is_object($obj);
+		$isArray = is_array($obj);
+		$isObject = is_object($obj);
 		foreach ($args as $source) {
 			if ($source) {
 				foreach (static::toArray($source) as $prop => $value) {
-					if ($is_array && !@$obj[$prop]) {
+					if ($isArray && !@$obj[$prop]) {
 						$obj[$prop] = $value;
-					} elseif ($is_object && !@$obj->$prop) {
+					} elseif ($isObject && !@$obj->$prop) {
 						$obj->$prop = $value;
 					}
 				}
@@ -768,8 +849,14 @@ class _ {
 	 * method chain, in order to perform operations on
 	 * intermediate results within the chain.
 	 */
-	public static function tap($obj, callable $interceptor) {
-		call_user_func($interceptor, $obj);
+	public static function tap(&$obj, $interceptor) {
+		$isClosure = static::_validateFunction($interceptor);
+		if ($isClosure) {
+			$interceptor($obj);
+		} else {
+			// $obj = call_user_func($interceptor, $obj); ?
+			call_user_func($interceptor, $obj);
+		}
 		return $obj;
 	}
 
@@ -792,13 +879,13 @@ class _ {
 			return true;
 		}
 		if (is_array($obj)) {
-			return (0 == count($obj));
+			return !count($obj);
 		}
 		if (is_string($obj)) {
-			return (0 == strlen($obj));
+			return !strlen($obj);
 		}
 		if (is_object($obj)) {
-			return true;
+			return !count(get_object_vars($obj));
 		}
 		return empty($obj);
 	}
@@ -818,7 +905,7 @@ class _ {
 	 * Is a given value callable?
 	 */
 	public static function isCallable($obj) {
-		return is_callable($obj);
+		return (is_callable($obj) || ($obj instanceof Closure));
 	}
 	/**
 	 * Is a given value a string?
@@ -831,7 +918,7 @@ class _ {
 	 */
 	public static function isNumber($obj) {
 		return (is_int($obj) || is_float($obj) ||
-					(is_string($obj) && is_numeric($obj)));
+				(is_string($obj) && is_numeric($obj)));
 	}
 	/**
 	 * Is a given value a Boolean?
@@ -860,10 +947,12 @@ class _ {
 	/**
 	 * Run a function n times.
 	 */
-	public static function times($n, callable $iterator) {
+	public static function times($n, $iterator) {
+		$isClosure = static::_validateFunction($iterator);
 		$accum = array();
 		for ($i = 0; $i < $n; ++$i) {
-			$accum[$i] = call_user_func($iterator, $i);
+			$accum[] = ($isClosure ? $iterator($i) :
+						call_user_func($iterator, $i));
 		}
 		return $accum;
 	}
@@ -899,7 +988,7 @@ class _ {
 		} else {
 			list($to, $from) = $entityMap;
 		}
-		return str_replace($entityMap['to'], $entityMap['from'], $string);
+		return str_replace($from, $to, $string);
 	}
 	public static function unescape($string) {
 		return static::escape($string, false);
@@ -918,7 +1007,7 @@ class _ {
 						$obj->$prop :
 						null));
 		return (is_callable($value) ?
-					call_user_func($value, $object) :
+					call_user_func($value) :
 					$value);
 	}
 	/**
