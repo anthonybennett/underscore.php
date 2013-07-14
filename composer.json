@@ -1,0 +1,15 @@
+{
+    "name": "anthonybennett/underscore.php",
+    "description": "An error-free port of underscore.js to PHP",
+    "authors": [
+      {
+        "name": "Anthony Bennett"
+      }
+    ],
+    "require": {
+        "php": ">=5.4.0"
+    },
+    "autoload": {
+      "files": ['underscore.php']
+    }
+}
