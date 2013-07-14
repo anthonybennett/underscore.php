@@ -1,6 +1,6 @@
 <?php
 /**
- * Underscore.js clone
+ * Underscore.js 1.5.1 clone
  *
  * @author bennett.ureta@gmail.com
  */
@@ -59,6 +59,10 @@ class _ {
 		return $result;
 	}
 	protected static function _flatten(array $input, $shallow = false, array &$output) {
+		$className = get_called_class();
+		if ($shallow && static::every($input, "$className::isArray")) {
+			return call_user_func_array('array_merge', $input);
+		}
 		foreach ($input as $value) {
 			if (is_array($value)) {
 				if ($shallow) {
@@ -330,7 +334,7 @@ class _ {
 							$iterator($value, $index, $list) :
 							call_user_func($iterator, $value, $index, $list)) :
 							$value);
-			if ($computed >= $result['computed']) {
+			if ($computed > $result['computed']) {
 				$result['computed'] = $computed;
 				$result['value'] = $value;
 			}
@@ -458,7 +462,7 @@ class _ {
 	public static function sortedIndex(array $array, $obj, $iterator = null) {
 		$iterator = ($iterator ?
 						static::_lookupIterator($iterator) :
-						'static::identity');
+						(get_called_class() . '::identity'));
 		$isClosure = static::_validateFunction($iterator);
     	$value = ($isClosure ?
 					$iterator($obj) :
@@ -580,7 +584,7 @@ class _ {
 	 * passed-in arrays.
 	 */
 	public static function union() {
-		return array_merge(static::unique(call_user_func_array('array_merge', func_get_args())));
+		return array_merge(static::unique(static::flatten(func_get_args(), true)));
 	}
 	/**
 	 * Produce an array that contains every item
@@ -604,7 +608,7 @@ class _ {
 	 */
 	public static function zip() {
 		$args = func_get_args();
-		$length = max(array_map('count', $args));
+		$length = (count($args) ? max(array_map('count', $args)) : 0);
 		$results = array();
 		for ($i = 0; $i < $length; ++$i) {
 			foreach ($args as $arg) {
@@ -745,9 +749,6 @@ class _ {
 	 * after being called N times.
 	 */
 	public static function after($times, $func) {
-		if ($times < 1) {
-			return call_user_func($func);
-		}
 		return function() use($times, $func) {
 			static $afterTimes = null;
 			if (is_null($afterTimes)) {

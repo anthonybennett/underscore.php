@@ -1,6 +1,6 @@
 <?php
 /**
- * Underscore.js clone unit tests
+ * Underscore.js 1.5.1 clone unit tests
  *
  * @author bennett.ureta@gmail.com
  */
@@ -811,18 +811,13 @@ class _Test extends PHPUnit_Framework_TestCase {
 		$result = _::zip($array1, $array2, $array3);
 		$this->assertInternalType('array', $result);
 		$this->assertCount(3, $result);
-		$this->assertInternalType('array', $result[0]);
-		$this->assertEquals(1, $result[0][0]);
-		$this->assertEquals('Tom', $result[0][1]);
-		$this->assertEquals(true, $result[0][2]);
-		$this->assertInternalType('array', $result[1]);
-		$this->assertEquals(2, $result[1][0]);
-		$this->assertEquals('Dick', $result[1][1]);
-		$this->assertEquals(false, $result[1][2]);
-		$this->assertInternalType('array', $result[2]);
-		$this->assertEquals(3, $result[2][0]);
-		$this->assertEquals('Harry', $result[2][1]);
-		$this->assertEquals(null, $result[2][2]);
+		$this->assertEquals(array(1, 'Tom', true), $result[0]);
+		$this->assertEquals(array(2, 'Dick', false), $result[1]);
+		$this->assertEquals(array(3, 'Harry', null), $result[2]);
+
+		// test not passing in any arguments
+		$result = _::zip();
+		$this->assertEquals(array(), $result);
 	}
 
 	public function testObject() {
