@@ -5,6 +5,8 @@
  * @author bennett.ureta@gmail.com
  */
 
+namespace anthonybennett\underscore.php
+
 class _ {
 	/**
 	 * Internal Functions
