@@ -5,7 +5,7 @@
  * @author bennett.ureta@gmail.com
  */
 
-namespace anthonybennett\underscore.php
+namespace anthonybennett\underscore
 
 class _ {
 	/**
