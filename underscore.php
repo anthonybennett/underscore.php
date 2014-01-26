@@ -1051,4 +1051,3 @@ class _ {
 		return call_user_func_array("static::$method", $arguments);
 	}
 }
-?>
