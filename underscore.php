@@ -5,6 +5,8 @@
  * @author bennett.ureta@gmail.com
  */
 
+namespace anthonybennett\underscore
+
 class _ {
 	/**
 	 * Internal Functions
@@ -1049,4 +1051,3 @@ class _ {
 		return call_user_func_array("static::$method", $arguments);
 	}
 }
-?>
